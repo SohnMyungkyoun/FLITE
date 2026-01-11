@@ -15,8 +15,28 @@ const defaultAdjustments = {
     highlights: 0,
     shadows: 0,
     whites: 0,
-    blacks: 0
+    blacks: 0,
+    curves: {
+        rgb: [[0, 0], [255, 255]],
+        r: [[0, 0], [255, 255]],
+        g: [[0, 0], [255, 255]],
+        b: [[0, 0], [255, 255]]
+    }
 };
+
+// 톤 곡선 관련 변수
+let curveCanvas, curveCtx;
+let currentChannel = 'rgb';
+let isDraggingPoint = false;
+let selectedPointIndex = -1;
+
+// 곡선 보간 모드
+const INTERPOLATION_MODE = 'monotone'; // 'monotone' 또는 'catmull-rom'
+
+// 히스토리 관리 (Undo/Redo)
+let editHistory = [];
+let historyIndex = -1;
+const MAX_HISTORY = 50;
 
 // ==============================================
 // 초기화
@@ -30,7 +50,12 @@ function initializeApp() {
     canvas = document.getElementById('canvas');
     ctx = canvas.getContext('2d', { willReadFrequently: true });
     
+    // 곡선 캔버스 초기화
+    curveCanvas = document.getElementById('curveCanvas');
+    curveCtx = curveCanvas.getContext('2d');
+    
     setupEventListeners();
+    setupCurveEditor();
     loadEditsFromStorage();
 }
 
@@ -66,6 +91,406 @@ function setupEventListeners() {
     // 썸네일 스트립 네비게이션
     document.getElementById('filmstripPrev').addEventListener('click', () => navigateImage(-1));
     document.getElementById('filmstripNext').addEventListener('click', () => navigateImage(1));
+    
+    // 곡선 토글
+    document.getElementById('toggleCurves').addEventListener('click', toggleCurvesSection);
+}
+
+// ==============================================
+// 톤 곡선 에디터 설정
+// ==============================================
+
+function setupCurveEditor() {
+    // 채널 선택 버튼
+    document.querySelectorAll('.channel-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.channel-btn').forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            currentChannel = e.target.dataset.channel;
+            drawCurve();
+        });
+    });
+    
+    // 곡선 캔버스 이벤트
+    curveCanvas.addEventListener('mousedown', onCurveMouseDown);
+    curveCanvas.addEventListener('mousemove', onCurveMouseMove);
+    curveCanvas.addEventListener('mouseup', onCurveMouseUp);
+    curveCanvas.addEventListener('mouseleave', onCurveMouseUp);
+    
+    // 곡선 리셋
+    document.getElementById('resetCurveBtn').addEventListener('click', resetCurve);
+    
+    // 초기 곡선 그리기
+    drawCurve();
+}
+
+function toggleCurvesSection() {
+    const content = document.getElementById('curvesContent');
+    const toggle = document.getElementById('toggleCurves');
+    
+    content.classList.toggle('collapsed');
+    toggle.classList.toggle('collapsed');
+}
+
+function drawCurve() {
+    const width = curveCanvas.width;
+    const height = curveCanvas.height;
+    
+    // 배경 초기화
+    curveCtx.fillStyle = '#2a2a2a';
+    curveCtx.fillRect(0, 0, width, height);
+    
+    // 그리드 그리기
+    curveCtx.strokeStyle = '#3a3a3a';
+    curveCtx.lineWidth = 1;
+    
+    // 수직선
+    for (let i = 0; i <= 4; i++) {
+        const x = (width / 4) * i;
+        curveCtx.beginPath();
+        curveCtx.moveTo(x, 0);
+        curveCtx.lineTo(x, height);
+        curveCtx.stroke();
+    }
+    
+    // 수평선
+    for (let i = 0; i <= 4; i++) {
+        const y = (height / 4) * i;
+        curveCtx.beginPath();
+        curveCtx.moveTo(0, y);
+        curveCtx.lineTo(width, y);
+        curveCtx.stroke();
+    }
+    
+    // 대각선 (기준선)
+    curveCtx.strokeStyle = '#555';
+    curveCtx.lineWidth = 1;
+    curveCtx.beginPath();
+    curveCtx.moveTo(0, height);
+    curveCtx.lineTo(width, 0);
+    curveCtx.stroke();
+    
+    // 현재 곡선 그리기
+    if (currentIndex < 0) return;
+    
+    const imageName = images[currentIndex].name;
+    if (!editsData[imageName]) {
+        editsData[imageName] = JSON.parse(JSON.stringify(defaultAdjustments));
+    }
+    
+    const points = editsData[imageName].curves[currentChannel];
+    
+    // 채널에 따른 색상
+    let curveColor = '#fff';
+    if (currentChannel === 'r') curveColor = '#ff5555';
+    if (currentChannel === 'g') curveColor = '#55ff55';
+    if (currentChannel === 'b') curveColor = '#5555ff';
+    
+    // 곡선 그리기 (부드러운 보간)
+    curveCtx.strokeStyle = curveColor;
+    curveCtx.lineWidth = 2.5;
+    curveCtx.lineCap = 'round';
+    curveCtx.lineJoin = 'round';
+    curveCtx.beginPath();
+    
+    // 더 부드러운 곡선을 위해 세밀하게 그리기
+    for (let px = 0; px < width; px += 0.5) {
+        const inputValue = (px / width) * 255;
+        const outputValue = interpolateCurve(inputValue, points);
+        const py = height - (outputValue / 255) * height;
+        
+        if (px === 0) {
+            curveCtx.moveTo(px, py);
+        } else {
+            curveCtx.lineTo(px, py);
+        }
+    }
+    curveCtx.stroke();
+    
+    // 그림자 효과
+    curveCtx.shadowColor = curveColor;
+    curveCtx.shadowBlur = 8;
+    curveCtx.shadowOffsetX = 0;
+    curveCtx.shadowOffsetY = 0;
+    curveCtx.stroke();
+    curveCtx.shadowBlur = 0;
+    
+    // 포인트 그리기
+    points.forEach((point, index) => {
+        const x = (point[0] / 255) * width;
+        const y = height - (point[1] / 255) * height;
+        
+        // 외곽선
+        curveCtx.strokeStyle = '#1a1a1a';
+        curveCtx.lineWidth = 3;
+        curveCtx.beginPath();
+        curveCtx.arc(x, y, 7, 0, Math.PI * 2);
+        curveCtx.stroke();
+        
+        // 내부 원
+        curveCtx.fillStyle = curveColor;
+        curveCtx.beginPath();
+        curveCtx.arc(x, y, 5, 0, Math.PI * 2);
+        curveCtx.fill();
+        
+        // 선택된 포인트 강조
+        if (index === selectedPointIndex) {
+            curveCtx.strokeStyle = '#fff';
+            curveCtx.lineWidth = 2;
+            curveCtx.beginPath();
+            curveCtx.arc(x, y, 10, 0, Math.PI * 2);
+            curveCtx.stroke();
+            
+            // 반짝이는 효과
+            curveCtx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            curveCtx.beginPath();
+            curveCtx.arc(x, y, 10, 0, Math.PI * 2);
+            curveCtx.fill();
+        }
+    });
+}
+
+function interpolateCurve(x, points) {
+    points.sort((a, b) => a[0] - b[0]);
+    
+    if (x <= points[0][0]) return points[0][1];
+    if (x >= points[points.length - 1][0]) return points[points.length - 1][1];
+    
+    if (INTERPOLATION_MODE === 'monotone') {
+        return monotoneInterpolate(x, points);
+    } else {
+        return catmullRomInterpolate(x, points);
+    }
+}
+
+function catmullRomInterpolate(x, points) {
+    // x가 속한 구간 찾기
+    let segmentIndex = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+        if (x >= points[i][0] && x <= points[i + 1][0]) {
+            segmentIndex = i;
+            break;
+        }
+    }
+    
+    // 4개 포인트 구하기 (p0, p1, p2, p3)
+    const p1 = points[segmentIndex];
+    const p2 = points[segmentIndex + 1];
+    
+    // 이전 포인트 (없으면 p1 복제)
+    const p0 = segmentIndex > 0 ? 
+        points[segmentIndex - 1] : 
+        [p1[0] - (p2[0] - p1[0]), p1[1]];
+    
+    // 다음 포인트 (없으면 p2 복제)
+    const p3 = segmentIndex < points.length - 2 ? 
+        points[segmentIndex + 2] : 
+        [p2[0] + (p2[0] - p1[0]), p2[1]];
+    
+    // t 계산 (0~1 사이)
+    const t = (x - p1[0]) / (p2[0] - p1[0]);
+    
+    // Catmull-Rom 공식
+    const t2 = t * t;
+    const t3 = t2 * t;
+    
+    // Y값 계산
+    const y = 0.5 * (
+        (2 * p1[1]) +
+        (-p0[1] + p2[1]) * t +
+        (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
+        (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3
+    );
+    
+    return y;
+}
+
+function monotoneInterpolate(x, points) {
+    // Monotone Cubic Interpolation (값이 튀지 않는 부드러운 곡선)
+    // Photoshop/Lightroom 스타일
+    
+    const n = points.length;
+    
+    // x가 속한 구간 찾기
+    let i = 0;
+    for (i = 0; i < n - 1; i++) {
+        if (x >= points[i][0] && x <= points[i + 1][0]) {
+            break;
+        }
+    }
+    
+    const x0 = points[i][0];
+    const y0 = points[i][1];
+    const x1 = points[i + 1][0];
+    const y1 = points[i + 1][1];
+    
+    // 기울기 계산
+    const secants = [];
+    for (let j = 0; j < n - 1; j++) {
+        const dx = points[j + 1][0] - points[j][0];
+        const dy = points[j + 1][1] - points[j][1];
+        secants.push(dx !== 0 ? dy / dx : 0);
+    }
+    
+    // 탄젠트 계산 (Monotone 조건)
+    const tangents = new Array(n);
+    tangents[0] = secants[0];
+    tangents[n - 1] = secants[n - 2];
+    
+    for (let j = 1; j < n - 1; j++) {
+        const s0 = secants[j - 1];
+        const s1 = secants[j];
+        
+        if (s0 * s1 <= 0) {
+            tangents[j] = 0;
+        } else {
+            tangents[j] = (s0 + s1) / 2;
+        }
+    }
+    
+    // Hermite interpolation
+    const t = (x - x0) / (x1 - x0);
+    const t2 = t * t;
+    const t3 = t2 * t;
+    
+    const h00 = 2 * t3 - 3 * t2 + 1;
+    const h10 = t3 - 2 * t2 + t;
+    const h01 = -2 * t3 + 3 * t2;
+    const h11 = t3 - t2;
+    
+    const m0 = tangents[i] * (x1 - x0);
+    const m1 = tangents[i + 1] * (x1 - x0);
+    
+    const y = h00 * y0 + h10 * m0 + h01 * y1 + h11 * m1;
+    
+    return y;
+}
+
+function onCurveMouseDown(e) {
+    if (currentIndex < 0) return;
+    
+    const rect = curveCanvas.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 255;
+    const y = 255 - ((e.clientY - rect.top) / rect.height) * 255;
+    
+    const imageName = images[currentIndex].name;
+    if (!editsData[imageName]) {
+        editsData[imageName] = JSON.parse(JSON.stringify(defaultAdjustments));
+    }
+    
+    const points = editsData[imageName].curves[currentChannel];
+    
+    // 기존 포인트 클릭 확인
+    selectedPointIndex = -1;
+    for (let i = 0; i < points.length; i++) {
+        const dist = Math.sqrt(
+            Math.pow(points[i][0] - x, 2) + 
+            Math.pow(points[i][1] - y, 2)
+        );
+        if (dist < 15) {
+            selectedPointIndex = i;
+            isDraggingPoint = true;
+            break;
+        }
+    }
+    
+    // 새 포인트 추가 (첫/마지막 포인트가 아닌 경우만)
+    if (selectedPointIndex === -1 && points.length < 10) {
+        // 히스토리에 저장
+        saveToHistory();
+        
+        points.push([Math.round(x), Math.round(y)]);
+        points.sort((a, b) => a[0] - b[0]);
+        selectedPointIndex = points.findIndex(p => p[0] === Math.round(x));
+        isDraggingPoint = true;
+        
+        document.getElementById('saveEditsBtn').disabled = false;
+        applyAdjustments();
+    }
+    
+    drawCurve();
+}
+
+let dragStarted = false;
+
+function onCurveMouseMove(e) {
+    if (!isDraggingPoint || selectedPointIndex === -1 || currentIndex < 0) return;
+    
+    // 드래그 시작 시 히스토리에 저장
+    if (!dragStarted) {
+        saveToHistory();
+        dragStarted = true;
+    }
+    
+    const rect = curveCanvas.getBoundingClientRect();
+    let x = ((e.clientX - rect.left) / rect.width) * 255;
+    let y = 255 - ((e.clientY - rect.top) / rect.height) * 255;
+    
+    // 범위 제한
+    x = Math.max(0, Math.min(255, x));
+    y = Math.max(0, Math.min(255, y));
+    
+    const imageName = images[currentIndex].name;
+    if (!editsData[imageName]) {
+        editsData[imageName] = JSON.parse(JSON.stringify(defaultAdjustments));
+    }
+    
+    const points = editsData[imageName].curves[currentChannel];
+    
+    // 첫 번째와 마지막 포인트는 x축 고정
+    if (selectedPointIndex === 0) {
+        points[selectedPointIndex] = [0, Math.round(y)];
+    } else if (selectedPointIndex === points.length - 1) {
+        points[selectedPointIndex] = [255, Math.round(y)];
+    } else {
+        points[selectedPointIndex] = [Math.round(x), Math.round(y)];
+    }
+    
+    drawCurve();
+    applyAdjustments();
+}
+
+function onCurveMouseUp(e) {
+    if (isDraggingPoint) {
+        dragStarted = false;
+        
+        // 더블 클릭으로 포인트 삭제 (첫/마지막 제외)
+        if (e.type === 'dblclick' && selectedPointIndex > 0 && currentIndex >= 0) {
+            saveToHistory();
+            
+            const imageName = images[currentIndex].name;
+            if (!editsData[imageName]) {
+                editsData[imageName] = JSON.parse(JSON.stringify(defaultAdjustments));
+            }
+            
+            const points = editsData[imageName].curves[currentChannel];
+            if (selectedPointIndex < points.length - 1) {
+                points.splice(selectedPointIndex, 1);
+                applyAdjustments();
+                drawCurve();
+            }
+        }
+    }
+    
+    isDraggingPoint = false;
+    selectedPointIndex = -1;
+}
+
+function resetCurve() {
+    if (currentIndex < 0) return;
+    
+    saveToHistory();
+    
+    const imageName = images[currentIndex].name;
+    if (!editsData[imageName]) {
+        editsData[imageName] = JSON.parse(JSON.stringify(defaultAdjustments));
+    }
+    
+    editsData[imageName].curves[currentChannel] = [[0, 0], [255, 255]];
+    
+    drawCurve();
+    applyAdjustments();
+    document.getElementById('saveEditsBtn').disabled = false;
 }
 
 // ==============================================
@@ -271,10 +696,17 @@ function loadEditsForCurrentImage() {
     if (currentIndex < 0) return;
     
     const imageName = images[currentIndex].name;
-    const edits = editsData[imageName] || { ...defaultAdjustments };
+    const edits = editsData[imageName] || JSON.parse(JSON.stringify(defaultAdjustments));
+    
+    // 곡선 데이터 확인
+    if (!edits.curves) {
+        edits.curves = JSON.parse(JSON.stringify(defaultAdjustments.curves));
+    }
     
     // UI 업데이트
     Object.keys(edits).forEach(key => {
+        if (key === 'curves') return; // 곡선은 별도 처리
+        
         const slider = document.getElementById(key);
         const valueDisplay = document.getElementById(`${key}Value`);
         
@@ -284,6 +716,9 @@ function loadEditsForCurrentImage() {
         }
     });
     
+    // 곡선 그리기
+    drawCurve();
+    
     // 편집 인디케이터
     updateEditIndicator();
     
@@ -292,20 +727,40 @@ function loadEditsForCurrentImage() {
 }
 
 function getCurrentAdjustments() {
+    if (currentIndex < 0) return JSON.parse(JSON.stringify(defaultAdjustments));
+    
+    const imageName = images[currentIndex].name;
+    const stored = editsData[imageName];
+    
     return {
         exposure: parseInt(document.getElementById('exposure').value),
         contrast: parseInt(document.getElementById('contrast').value),
         highlights: parseInt(document.getElementById('highlights').value),
         shadows: parseInt(document.getElementById('shadows').value),
         whites: parseInt(document.getElementById('whites').value),
-        blacks: parseInt(document.getElementById('blacks').value)
+        blacks: parseInt(document.getElementById('blacks').value),
+        curves: stored?.curves ? JSON.parse(JSON.stringify(stored.curves)) : JSON.parse(JSON.stringify(defaultAdjustments.curves))
     };
 }
 
 function isDefaultAdjustments(adjustments) {
-    return Object.keys(defaultAdjustments).every(
+    // 슬라이더 값 확인
+    const sliderKeys = ['exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks'];
+    const slidersDefault = sliderKeys.every(
         key => adjustments[key] === defaultAdjustments[key]
     );
+    
+    // 곡선 확인
+    if (!adjustments.curves) return slidersDefault;
+    
+    const curvesDefault = Object.keys(adjustments.curves).every(channel => {
+        const points = adjustments.curves[channel];
+        return points.length === 2 && 
+               points[0][0] === 0 && points[0][1] === 0 &&
+               points[1][0] === 255 && points[1][1] === 255;
+    });
+    
+    return slidersDefault && curvesDefault;
 }
 
 function saveCurrentEdits() {
@@ -330,10 +785,13 @@ function saveCurrentEdits() {
 function resetCurrentEdits() {
     if (currentIndex < 0) return;
     
+    // 히스토리에 추가
+    saveToHistory();
+    
     const imageName = images[currentIndex].name;
     
-    // 기본값으로 리셋
-    editsData[imageName] = { ...defaultAdjustments };
+    // 기본값으로 리셋 (깊은 복사)
+    editsData[imageName] = JSON.parse(JSON.stringify(defaultAdjustments));
     
     // UI 업데이트
     loadEditsForCurrentImage();
@@ -376,6 +834,22 @@ function applyAdjustments() {
     if (!originalImageData) return;
     
     const adjustments = getCurrentAdjustments();
+    
+    // 곡선 룩업 테이블 생성 (부드러운 보간)
+    const curveLUT = {
+        rgb: new Array(256),
+        r: new Array(256),
+        g: new Array(256),
+        b: new Array(256)
+    };
+    
+    for (let channel in curveLUT) {
+        for (let i = 0; i < 256; i++) {
+            const value = interpolateCurve(i, adjustments.curves[channel]);
+            // 범위 제한 후 반올림
+            curveLUT[channel][i] = Math.max(0, Math.min(255, Math.round(value)));
+        }
+    }
     
     // 원본 이미지 데이터 복사
     const imageData = ctx.createImageData(originalImageData);
@@ -440,6 +914,21 @@ function applyAdjustments() {
         }
         
         // 값 제한 (0-255)
+        r = Math.max(0, Math.min(255, r));
+        g = Math.max(0, Math.min(255, g));
+        b = Math.max(0, Math.min(255, b));
+        
+        // 톤 곡선 적용
+        r = curveLUT.rgb[Math.round(r)];
+        g = curveLUT.rgb[Math.round(g)];
+        b = curveLUT.rgb[Math.round(b)];
+        
+        // 채널별 곡선 적용
+        r = curveLUT.r[Math.round(r)];
+        g = curveLUT.g[Math.round(g)];
+        b = curveLUT.b[Math.round(b)];
+        
+        // 최종 값 설정
         data[i] = Math.max(0, Math.min(255, r));
         data[i + 1] = Math.max(0, Math.min(255, g));
         data[i + 2] = Math.max(0, Math.min(255, b));
@@ -484,6 +973,27 @@ function navigateImage(direction) {
 }
 
 function handleKeyboardNavigation(e) {
+    // Ctrl+Z / Cmd+Z (Undo)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+        return;
+    }
+    
+    // Ctrl+Shift+Z / Cmd+Shift+Z (Redo)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) {
+        e.preventDefault();
+        redo();
+        return;
+    }
+    
+    // Ctrl+Y / Cmd+Y (Redo)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+        e.preventDefault();
+        redo();
+        return;
+    }
+    
     if (images.length === 0) return;
     
     switch(e.key) {
@@ -559,6 +1069,93 @@ function showNotification(message) {
         notification.style.animation = 'slideOut 0.3s ease-out';
         setTimeout(() => notification.remove(), 300);
     }, 2500);
+}
+
+// ==============================================
+// 히스토리 관리 (Undo/Redo)
+// ==============================================
+
+function saveToHistory() {
+    if (currentIndex < 0) return;
+    
+    const imageName = images[currentIndex].name;
+    const currentState = JSON.parse(JSON.stringify(
+        editsData[imageName] || defaultAdjustments
+    ));
+    
+    // 현재 위치 이후의 히스토리 삭제
+    editHistory = editHistory.slice(0, historyIndex + 1);
+    
+    // 새 상태 추가
+    editHistory.push({
+        imageName,
+        state: currentState
+    });
+    
+    // 최대 개수 제한
+    if (editHistory.length > MAX_HISTORY) {
+        editHistory.shift();
+    } else {
+        historyIndex++;
+    }
+}
+
+function undo() {
+    if (currentIndex < 0) {
+        showNotification('⚠️ 이미지를 먼저 선택하세요');
+        return;
+    }
+    
+    if (historyIndex <= 0) {
+        showNotification('⚠️ 더 이상 되돌릴 수 없습니다');
+        return;
+    }
+    
+    historyIndex--;
+    const historyItem = editHistory[historyIndex];
+    
+    if (historyItem.imageName === images[currentIndex].name) {
+        editsData[historyItem.imageName] = JSON.parse(JSON.stringify(historyItem.state));
+        loadEditsForCurrentImage();
+        saveEditsToStorage();
+        updateFileList();
+        generateThumbnails();
+        updateEditIndicator();
+        
+        showNotification('↶ 실행 취소');
+    } else {
+        historyIndex++;
+        showNotification('⚠️ 다른 이미지의 히스토리입니다');
+    }
+}
+
+function redo() {
+    if (currentIndex < 0) {
+        showNotification('⚠️ 이미지를 먼저 선택하세요');
+        return;
+    }
+    
+    if (historyIndex >= editHistory.length - 1) {
+        showNotification('⚠️ 더 이상 다시 실행할 수 없습니다');
+        return;
+    }
+    
+    historyIndex++;
+    const historyItem = editHistory[historyIndex];
+    
+    if (historyItem.imageName === images[currentIndex].name) {
+        editsData[historyItem.imageName] = JSON.parse(JSON.stringify(historyItem.state));
+        loadEditsForCurrentImage();
+        saveEditsToStorage();
+        updateFileList();
+        generateThumbnails();
+        updateEditIndicator();
+        
+        showNotification('↷ 다시 실행');
+    } else {
+        historyIndex--;
+        showNotification('⚠️ 다른 이미지의 히스토리입니다');
+    }
 }
 
 // 애니메이션 스타일

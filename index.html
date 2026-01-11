@@ -123,6 +123,31 @@
                     <input type="range" id="blacks" min="-100" max="100" value="0" step="1">
                 </div>
 
+                <!-- 톤 곡선 섹션 -->
+                <div class="curves-section">
+                    <div class="section-header">
+                        <h4>📈 톤 곡선</h4>
+                        <button id="toggleCurves" class="btn-toggle">▼</button>
+                    </div>
+                    <div class="curves-content" id="curvesContent">
+                        <!-- 채널 선택 -->
+                        <div class="channel-selector">
+                            <button class="channel-btn active" data-channel="rgb">●</button>
+                            <button class="channel-btn" data-channel="r" style="color: #ff5555;">●</button>
+                            <button class="channel-btn" data-channel="g" style="color: #55ff55;">●</button>
+                            <button class="channel-btn" data-channel="b" style="color: #5555ff;">●</button>
+                        </div>
+                        
+                        <!-- 곡선 캔버스 -->
+                        <div class="curve-container">
+                            <canvas id="curveCanvas" width="256" height="256"></canvas>
+                        </div>
+                        
+                        <!-- 곡선 리셋 버튼 -->
+                        <button id="resetCurveBtn" class="btn btn-secondary btn-sm">곡선 초기화</button>
+                    </div>
+                </div>
+
                 <div class="panel-actions">
                     <button id="saveEditsBtn" class="btn btn-success" disabled>
                         💾 편집 저장
