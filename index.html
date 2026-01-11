@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flite - Photo Editor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- 헤더 -->
+    <header class="app-header">
+        <div class="header-content">
+            <h1>📸 Flite</h1>
+            <div class="header-actions">
+                <button id="openFolderBtn" class="btn btn-primary">
+                    📁 폴더 열기
+                </button>
+                <input type="file" id="folderInput" webkitdirectory directory multiple style="display: none;">
+            </div>
+        </div>
+    </header>
+
+    <!-- 메인 레이아웃 -->
+    <div class="app-layout">
+        <!-- 사이드바: 파일 리스트 -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h3>📂 사진 목록</h3>
+                <span id="imageCount" class="image-count">0장</span>
+            </div>
+            <div class="file-list" id="fileList">
+                <div class="empty-state">
+                    <p>폴더를 열어서 시작하세요</p>
+                    <button class="btn btn-secondary" onclick="document.getElementById('openFolderBtn').click()">
+                        📁 폴더 열기
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 메인 컨텐츠 영역 -->
+        <main class="main-content">
+            <!-- 이미지 뷰어 -->
+            <div class="viewer-section">
+                <div id="viewerPlaceholder" class="viewer-placeholder">
+                    <div class="placeholder-content">
+                        <h2>사진을 선택하세요</h2>
+                        <p>왼쪽에서 사진을 클릭하거나 화살표 키를 사용하세요</p>
+                    </div>
+                </div>
+                <canvas id="canvas"></canvas>
+                
+                <!-- 이미지 정보 오버레이 -->
+                <div id="imageInfo" class="image-info">
+                    <span id="imageName"></span>
+                    <span id="imageSize"></span>
+                </div>
+            </div>
+
+            <!-- 썸네일 스트립 -->
+            <div class="filmstrip-section" id="filmstripSection" style="display: none;">
+                <button class="filmstrip-nav prev" id="filmstripPrev" disabled>◀</button>
+                <div class="filmstrip" id="filmstrip"></div>
+                <button class="filmstrip-nav next" id="filmstripNext" disabled>▶</button>
+            </div>
+        </main>
+
+        <!-- 편집 패널 -->
+        <aside class="edit-panel" id="editPanel">
+            <div class="panel-header">
+                <h3>⚙️ 편집</h3>
+                <div class="edit-indicator" id="editIndicator" style="display: none;">
+                    <span class="dot"></span> 수정됨
+                </div>
+            </div>
+
+            <div class="panel-content">
+                <div class="control-group">
+                    <label for="exposure">
+                        <span class="label-text">노출</span>
+                        <span class="value-display" id="exposureValue">0</span>
+                    </label>
+                    <input type="range" id="exposure" min="-100" max="100" value="0" step="1">
+                </div>
+
+                <div class="control-group">
+                    <label for="contrast">
+                        <span class="label-text">대비</span>
+                        <span class="value-display" id="contrastValue">0</span>
+                    </label>
+                    <input type="range" id="contrast" min="-100" max="100" value="0" step="1">
+                </div>
+
+                <div class="control-group">
+                    <label for="highlights">
+                        <span class="label-text">밝은 영역</span>
+                        <span class="value-display" id="highlightsValue">0</span>
+                    </label>
+                    <input type="range" id="highlights" min="-100" max="100" value="0" step="1">
+                </div>
+
+                <div class="control-group">
+                    <label for="shadows">
+                        <span class="label-text">어두운 영역</span>
+                        <span class="value-display" id="shadowsValue">0</span>
+                    </label>
+                    <input type="range" id="shadows" min="-100" max="100" value="0" step="1">
+                </div>
+
+                <div class="control-group">
+                    <label for="whites">
+                        <span class="label-text">흰색</span>
+                        <span class="value-display" id="whitesValue">0</span>
+                    </label>
+                    <input type="range" id="whites" min="-100" max="100" value="0" step="1">
+                </div>
+
+                <div class="control-group">
+                    <label for="blacks">
+                        <span class="label-text">검정</span>
+                        <span class="value-display" id="blacksValue">0</span>
+                    </label>
+                    <input type="range" id="blacks" min="-100" max="100" value="0" step="1">
+                </div>
+
+                <div class="panel-actions">
+                    <button id="saveEditsBtn" class="btn btn-success" disabled>
+                        💾 편집 저장
+                    </button>
+                    <button id="resetBtn" class="btn btn-secondary" disabled>
+                        🔄 초기화
+                    </button>
+                    <button id="exportBtn" class="btn btn-primary" disabled>
+                        📤 내보내기
+                    </button>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
